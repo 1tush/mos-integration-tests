@@ -64,3 +64,24 @@ class TestDVR(base.TestBase):
             security_groups=[self.security_group.id])
 
         self.check_ping_from_vm(server, vm_keypair=self.instance_keypair)
+
+
+@pytest.mark.check_env_('has_1_or_more_computes', 'is_dvr')
+@pytest.mark.usefixtures("setup")
+class TestDVRHorizon(base.TestBase):
+    """Test operating via Horizon"""
+
+    def test_create_distributed_router_with_member_user(self, driver):
+        """Create distributed router with member user in Horizon
+
+        Scenario:
+            1. Create new user for admin tenant with member role
+            2. Login with member user to Horizon
+            3. Navigate to Project->Network->Routers
+            4. Click on Create router button
+            5. Check that there aren't variants for Router Type
+            6. Create test_router_member
+            7. Check that the type is distributed in the list with routers
+        """
+        horizon_url = 'http://{}/'.format(self.os_conn.controller_ip)
+        driver
