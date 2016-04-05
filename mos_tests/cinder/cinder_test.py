@@ -13,13 +13,11 @@
 #    under the License.
 
 import logging
-import time
 
 import pytest
 
 from mos_tests.functions.base import OpenStackTestCase
 from mos_tests.functions import common as common_functions
-from mos_tests import settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +31,7 @@ class CinderIntegrationTests(OpenStackTestCase):
 
         self.volume_list = []
         self.snapshot_list = []
-        tenant_name = settings.KEYSTONE_CREDS['tenant_name']
-        self.tenant_id = [t.id for t in self.keystone.tenants.list() if
-                          t.name == tenant_name][0]
+        self.tenant_id = self.session.get_project_id()
         self.quota = self.cinder.quotas.get(self.tenant_id).snapshots
         self.cinder.quotas.update(self.tenant_id, snapshots=200)
 
@@ -43,7 +39,7 @@ class CinderIntegrationTests(OpenStackTestCase):
         try:
             for snapshot in self.snapshot_list:
                 common_functions.delete_volume_snapshot(self.cinder, snapshot)
-            self.snapshot_list = []
+
             for volume in self.volume_list:
                 common_functions.delete_volume(self.cinder, volume)
             self.volume_list = []
@@ -52,63 +48,63 @@ class CinderIntegrationTests(OpenStackTestCase):
 
     @pytest.mark.testrail_id('543176')
     def test_creating_multiple_snapshots(self):
-        """This test case checks creation of several snapshot at the same time
+        """Checks creation of several snapshot at the same time
 
             Steps:
                 1. Create a volume
                 2. Create 70 snapshots for it. Wait for creation
                 3. Delete all of them
-                4. Launch creation of 50 snapshot without waiting of deletion
+                4. Launch creation of 50 snapshot without waiting of creation
         """
         # 1. Create volume
         logger.info('Create volume')
-        image_id = [image.id for image in self.nova.images.list() if
-                    image.name == 'TestVM'][0]
-        volume = common_functions.create_volume(self.cinder, image_id)
+        image = self._get_cirros_image()
+        volume = common_functions.create_volume(self.cinder, image.id)
         self.volume_list.append(volume)
 
         # 2. Creation of 70 snapshots
         logger.info('Create 70 snapshots')
-        count = 70
-        initial_snapshot_lst = []
-        for num in xrange(count):
+        for num in range(70):
             logger.info('Creating {} snapshot'.format(num))
-            snapshot_id = self.cinder.volume_snapshots \
-                .create(volume.id, name='1st_creation_{0}'.format(num))
-            initial_snapshot_lst.append(snapshot_id)
-            self.assertTrue(
-                common_functions.check_volume_snapshot_status(self.cinder,
-                                                              snapshot_id,
-                                                              'available'))
-        self.snapshot_list.extend(initial_snapshot_lst)
+            snapshot = self.cinder.volume_snapshots.create(
+                volume.id,
+                name='1st_creation_{0}'.format(num))
+            self.snapshot_list.append(snapshot)
+            self.assertTrue(common_functions.check_volume_snapshot_status(
+                self.cinder, snapshot, 'available'))
 
         # 3. Delete all snapshots
         logger.info('Delete all snapshots')
-        for snapshot in initial_snapshot_lst:
+        for snapshot in self.snapshot_list:
             self.cinder.volume_snapshots.delete(snapshot)
 
-        # 4. Launch creation of 50 snapshot without waiting of deletion
-        logger.info('Launch creation of 50 snapshot without waiting '
-                    'of deletion')
-        new_count = 50
-        new_snapshot_lst = []
-        for num in xrange(new_count):
-            logger.info('Creating {} snapshot'.format(num))
-            snapshot_id = self.cinder.volume_snapshots \
-                .create(volume.id, name='2nd_creation_{0}'.format(num))
-            new_snapshot_lst.append(snapshot_id)
-        self.snapshot_list.extend(new_snapshot_lst)
+        common_functions.wait(lambda: len(self.cinder.volume_snapshots.findall(
+                status='available', volume_id=volume.id)) == 0,
+                timeout_seconds=60,
+                waiting_for='snapshots to be deleted')
 
-        timeout = time.time() + (new_count + count) * 10
-        while [s.status for s in self.cinder.volume_snapshots.list() if
-               s in new_snapshot_lst].count('available') != new_count:
-            if time.time() < timeout:
-                time.sleep(10)
-            else:
-                unavailable = [s.id for s in
-                               self.cinder.volume_snapshots.list() if
-                               s.status != 'available']
-                raise AssertionError(
-                    "All snapshots must be available. "
-                    "List of unavailable snapshots:\n\t{0}".format(
-                        "\n\t".join(unavailable)))
+        self.snapshot_list = []
+
+        # 4. Launch creation of 50 snapshot without waiting of creation
+        logger.info('Launch creation of 50 snapshot without waiting '
+                    'of creation')
+        new_count = 50
+        for num in range(new_count):
+            logger.info('Creating {} snapshot'.format(num))
+            snapshot = self.cinder.volume_snapshots.create(
+                volume.id,
+                name='2nd_creation_{0}'.format(num))
+            self.snapshot_list.append(snapshot)
+
+        def is_all_available():
+            available_count = len(self.cinder.volume_snapshots.findall(
+                volume_id=volume.id, status='available'))
+            logger.debug('Available snapshot count: {}'.format(
+                available_count))
+            return available_count == new_count
+
+        common_functions.wait(
+            is_all_available,
+            timeout_seconds=10 * 60,
+            sleep_seconds=20,
+            waiting_for='all snapshot became to available state')
