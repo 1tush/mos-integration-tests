@@ -1,5 +1,5 @@
 [gerrit]
-host=review.gerrithub.io
+host=cz7776.bud.mirantis.net
 port=29418
-project=Mirantis/mos-integration-tests.git
+project=gdyuldin/mos-integration-tests.git
 defaultbranch=master
